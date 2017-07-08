@@ -26,6 +26,7 @@ import (
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/urlfetch"
+	"google.golang.org/appengine/memcache"
 )
 
 var indexTmpl = template.Must(template.ParseFiles("index.html"))
@@ -61,6 +62,19 @@ func handleRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 			
 	splitUri := strings.SplitN(requestUri, "/", 4)
+// Let's check to see if the URI already exists in our cache.
+// If it does, then we will redirect the user instead of making a HTTP request
+	item, err := memcache.Get(c, splitUri[2])
+	if err != nil && err != memcache.ErrCacheMiss {
+		log.Errorf(c, "Error querying memcache: %s", err)
+	} else if err != nil && err == memcache.ErrCacheMiss {
+		log.Errorf(c, "memcache miss: %s", err)
+	} else {
+		cacheGSite := string(item.Value)
+		log.Errorf(c, "Redirecting request URI %s to cached destination URI %s", requestUri, cacheGSite)
+		http.Redirect(w, r, cacheGSite, 302)
+		return
+	}
 	
 	oldGSite := "https://sites.google.com/a/umich.edu/" + splitUri[2]
 	newGSite := "https://sites.google.com/umich.edu/" + splitUri[2]
@@ -68,6 +82,14 @@ func handleRedirect(w http.ResponseWriter, r *http.Request) {
 	responseOld, errOld := client.Get(oldGSite)
 	if errOld == nil && responseOld.StatusCode == 200  {
 		log.Errorf(c, "Received response: %s", responseOld.Status)
+		item := &memcache.Item {
+			Key: splitUri[2],
+			Value: []byte(oldGSite),
+		}
+		if err := memcache.Set(c, item); err != nil {
+			log.Errorf(c, "Error saving Key=%q Value=[% x]", item.Key, item.Value)
+		}
+		log.Errorf(c, "Redirecting request URI %s to destination URI %s", requestUri, oldGSite)
 		http.Redirect(w, r, oldGSite, 302)
 		return
 	}
@@ -76,6 +98,14 @@ func handleRedirect(w http.ResponseWriter, r *http.Request) {
 	responseNew, errNew := client.Get(newGSite)
 	if errNew == nil && responseNew.StatusCode == 200 {
 		log.Errorf(c, "Received response: %s", responseNew.Status)
+		item := &memcache.Item {
+			Key: splitUri[2],
+			Value: []byte(newGSite),
+		}
+		if err := memcache.Set(c, item); err != nil {
+			log.Errorf(c, "Error saving Key=%q Value=[% x]", item.Key, item.Value)
+		}
+		log.Errorf(c, "Redirecting request URI %s to destination URI %s", requestUri, newGSite)
 		http.Redirect(w, r, newGSite, 302)
 		return
 	}
